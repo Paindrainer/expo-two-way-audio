@@ -20,8 +20,11 @@ import java.util.concurrent.Executors
 import kotlin.math.pow
 
 
-class AudioEngine (context: Context) {
-    private val SAMPLE_RATE = 16000
+private const val MICROPHONE_SAMPLE_RATE = 16000
+private const val DEFAULT_PLAYBACK_SAMPLE_RATE = 24000
+
+class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PLAYBACK_SAMPLE_RATE) {
+    private val playbackSampleRate = initialPlaybackSampleRate
     private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
     private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
 
@@ -39,6 +42,9 @@ class AudioEngine (context: Context) {
     var isRecording = false
     private var isRecordingBeforePause = false
     var isPlaying = false
+
+    val currentPlaybackSampleRate: Int
+        get() = playbackSampleRate
 
     // Callbacks
     var onMicDataCallback: ((ByteArray) -> Unit)? = null
@@ -74,7 +80,7 @@ class AudioEngine (context: Context) {
         }, null)
 
         val bufferSize = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
+            playbackSampleRate,
             AudioFormat.CHANNEL_OUT_MONO,
             AUDIO_FORMAT
         )
@@ -86,7 +92,7 @@ class AudioEngine (context: Context) {
                 .build(),
             AudioFormat.Builder()
                 .setEncoding(AUDIO_FORMAT)
-                .setSampleRate(SAMPLE_RATE)
+                .setSampleRate(playbackSampleRate)
                 .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                 .build(),
             bufferSize,
@@ -170,10 +176,10 @@ class AudioEngine (context: Context) {
     @RequiresApi(Build.VERSION_CODES.Q)
     @SuppressLint("MissingPermission")
     private fun startRecording(){
-        val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+        val bufferSize = AudioRecord.getMinBufferSize(MICROPHONE_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-            SAMPLE_RATE,
+            MICROPHONE_SAMPLE_RATE,
             CHANNEL_CONFIG,
             AUDIO_FORMAT,
             bufferSize
@@ -313,7 +319,15 @@ class AudioEngine (context: Context) {
     @SuppressLint("NewApi")
     fun tearDown() {
         stopRecording()
-        audioTrack.stop()
+        executorServicePlayback.shutdownNow()
+        audioSampleQueue.clear()
+        if (::audioTrack.isInitialized) {
+            if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                audioTrack.pause()
+            }
+            audioTrack.flush()
+            audioTrack.release()
+        }
         audioManager.mode = AudioManager.MODE_NORMAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.clearCommunicationDevice()

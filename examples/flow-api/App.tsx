@@ -5,6 +5,7 @@ import { Button, StyleSheet, Text, View } from "react-native";
 import { Platform } from "react-native";
 
 import {
+  DEFAULT_PLAYBACK_SAMPLE_RATE,
   type MicrophoneDataCallback,
   type VolumeLevelCallback,
   getMicrophoneModeIOS,
@@ -63,7 +64,7 @@ export function FlowTest() {
   // Initialize Expo Two Way Audio
   useEffect(() => {
     const initializeAudio = async () => {
-      await initialize();
+      await initialize(DEFAULT_PLAYBACK_SAMPLE_RATE);
       setAudioInitialized(true);
     };
 

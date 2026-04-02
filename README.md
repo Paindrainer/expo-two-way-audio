@@ -6,7 +6,7 @@ The aim of the module is to facilitate creating real-time conversational apps. T
 
 - Request audio recording permissions
 - Get clean (applying Acoustic Echo Cancelling) microphone samples in PCM format (1 channel 16 bit at 16kHz)
-- Play audio samples in PCM format (1 channel 16 bit at 16kHz). Playback happens through main speaker unless external audio sources are connected.
+- Play audio samples in PCM format (1 channel 16 bit). Playback defaults to 24kHz and can be overridden during initialization. Playback happens through main speaker unless external audio sources are connected.
 - Provide volume level both for the input and output samples. Float between 0 and 1.
 - [iOS only] Get microphone mode and prompt user to select a microphone mode.
 
@@ -36,7 +36,8 @@ Please check out our [examples/](./examples) to get full sample code.
    ```JSX
    useEffect(() => {
        const initializeAudio = async () => {
-           await initialize();
+           await initialize(); // Defaults playback to 24kHz
+           // Or override it for 16kHz PCM sources: await initialize(16000);
        };
        initializeAudio();
    }, []);
@@ -54,6 +55,7 @@ Please check out our [examples/](./examples) to get full sample code.
 
     // As an example, let's play pcm data hardcoded in a variable.
     // The examples/basic-usage does this. Check it out for real base64 data.
+    // Make sure the PCM sample rate matches the value passed to initialize().
     const audioChunk = "SOME PCM DATA BASE64 ENCODED HERE"
     const buffer = Buffer.from(audioChunk, "base64");
     const pcmData = new Uint8Array(buffer);

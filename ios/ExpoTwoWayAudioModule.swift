@@ -5,6 +5,7 @@ let ON_INPUT_VOLUME_LEVEL_EVENT_NAME = "onInputVolumeLevelData"
 let ON_OUTPUT_VOLUME_LEVEL_EVENT_NAME = "onOutputVolumeLevelData"
 let ON_RECORDING_CHANGE_EVENT_NAME = "onRecordingChange"
 let ON_AUDIO_INTERRUPTION_EVENT_NAME = "onAudioInterruption"
+private let defaultPlaybackSampleRate = 24000
 
 public class ExpoTwoWayAudioModule: Module {
     private var audioEngine: AudioEngine?
@@ -22,12 +23,21 @@ public class ExpoTwoWayAudioModule: Module {
 
         }
 
-        AsyncFunction("initialize") { () -> Bool in
+        AsyncFunction("initialize") { (playbackSampleRate: Int) -> Bool in
+            let resolvedPlaybackSampleRate = playbackSampleRate > 0
+                ? playbackSampleRate
+                : defaultPlaybackSampleRate
+
             do {
-                if self.audioEngine != nil {
-                    return true
+                if let currentAudioEngine = self.audioEngine {
+                    if Int(currentAudioEngine.playbackSampleRate) == resolvedPlaybackSampleRate {
+                        return true
+                    }
+                    currentAudioEngine.tearDown()
+                    self.audioEngine = nil
                 }
-                self.audioEngine = try AudioEngine()
+
+                self.audioEngine = try AudioEngine(playbackSampleRate: Double(resolvedPlaybackSampleRate))
                 self.setupMicrophoneCallback()
                 self.setupInputAudioLevelCallback()
                 self.setupOutputAudioLevelCallback()

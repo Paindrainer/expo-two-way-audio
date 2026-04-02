@@ -1,11 +1,12 @@
 package expo.modules.twowayaudio
 
 import AudioEngine
+import android.util.Log
 import androidx.core.os.bundleOf
+import expo.modules.interfaces.permissions.Permissions
+import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import expo.modules.kotlin.Promise
-import expo.modules.interfaces.permissions.Permissions
 
 class ExpoTwoWayAudioModule : Module() {
     companion object {
@@ -14,93 +15,109 @@ class ExpoTwoWayAudioModule : Module() {
         private const val ON_OUTPUT_VOLUME_LEVEL_EVENT = "onOutputVolumeLevelData"
         private const val ON_RECORDING_CHANGE_EVENT = "onRecordingChange"
         private const val ON_AUDIO_INTERRUPTION_EVENT = "onAudioInterruption"
+        private const val DEFAULT_PLAYBACK_SAMPLE_RATE = 24000
+        private const val LOG_TAG = "ExpoTwoWayAudio"
         var audioEngine: AudioEngine? = null
     }
 
     override fun definition() = ModuleDefinition {
         Name("ExpoTwoWayAudio")
-        AsyncFunction("initialize") { promise: Promise ->
+
+        AsyncFunction("initialize") { playbackSampleRate: Int, promise: Promise ->
+            val resolvedPlaybackSampleRate = if (playbackSampleRate > 0) {
+                playbackSampleRate
+            } else {
+                DEFAULT_PLAYBACK_SAMPLE_RATE
+            }
+
             try {
-                if (audioEngine != null) {
-                    promise.resolve(true)
-                    return@AsyncFunction
+                val existingEngine = audioEngine
+                if (existingEngine != null) {
+                    if (existingEngine.currentPlaybackSampleRate == resolvedPlaybackSampleRate) {
+                        promise.resolve(true)
+                        return@AsyncFunction
+                    }
+                    existingEngine.tearDown()
+                    audioEngine = null
                 }
-                audioEngine = appContext.reactContext?.let { AudioEngine(it) }
+
+                audioEngine = appContext.reactContext?.let { AudioEngine(it, resolvedPlaybackSampleRate) }
                 setupCallbacks()
-                promise.resolve(true)
+                promise.resolve(audioEngine != null)
             } catch (e: Exception) {
+                Log.e(LOG_TAG, "Initialize failed", e)
                 promise.resolve(false)
             }
         }
 
-         Function("isRecording") {
-             audioEngine?.isRecording ?: false
-         }
+        Function("isRecording") {
+            audioEngine?.isRecording ?: false
+        }
 
-         Function("toggleRecording") { value: Boolean ->
-             audioEngine?.let { engine ->
-                 val isRecording = engine.toggleRecording(value)
-                 sendEvent(ON_RECORDING_CHANGE_EVENT, mapOf("data" to isRecording))
-                 isRecording
-             } ?: false
-         }
+        Function("toggleRecording") { value: Boolean ->
+            audioEngine?.let { engine ->
+                val isRecording = engine.toggleRecording(value)
+                sendEvent(ON_RECORDING_CHANGE_EVENT, mapOf("data" to isRecording))
+                isRecording
+            } ?: false
+        }
 
-         Function("tearDown") {
-             audioEngine?.tearDown()
-             audioEngine = null
-             null
-         }
+        Function("tearDown") {
+            audioEngine?.tearDown()
+            audioEngine = null
+            null
+        }
 
-         Function("restart") {
-             audioEngine?.resumeRecordingAndPlayer()
-             sendEvent(ON_RECORDING_CHANGE_EVENT, mapOf(
-                 "data" to (audioEngine?.isRecording ?: false)
-             ))
-         }
+        Function("restart") {
+            audioEngine?.resumeRecordingAndPlayer()
+            sendEvent(
+                ON_RECORDING_CHANGE_EVENT,
+                mapOf("data" to (audioEngine?.isRecording ?: false)),
+            )
+        }
 
-         Function("playPCMData") { data: kotlin.ByteArray ->
-             audioEngine?.playPCMData(data)
-         }
+        Function("playPCMData") { data: kotlin.ByteArray ->
+            audioEngine?.playPCMData(data)
+        }
 
-         Function("bypassVoiceProcessing") { bypass: Boolean ->
-             audioEngine?.bypassVoiceProcessing(bypass)
-         }
+        Function("bypassVoiceProcessing") { bypass: Boolean ->
+            audioEngine?.bypassVoiceProcessing(bypass)
+        }
 
-         Function("isPlaying") {
-             audioEngine?.isPlaying ?: false
-         }
+        Function("isPlaying") {
+            audioEngine?.isPlaying ?: false
+        }
 
         Function("getMicrophoneModeIOS") {
             throw UnsupportedOperationException("getMicrophoneModeIOS is only supported on iOS")
         }
 
-        Function ("setMicrophoneModeIOS") {
+        Function("setMicrophoneModeIOS") {
             throw UnsupportedOperationException("setMicrophoneModeIOS is only supported on iOS")
         }
 
-         AsyncFunction("getMicrophonePermissionsAsync") { promise: Promise ->
-             Permissions.getPermissionsWithPermissionsManager(
-                 appContext.permissions,
-                 promise,
-                 android.Manifest.permission.RECORD_AUDIO
-             )
-         }
+        AsyncFunction("getMicrophonePermissionsAsync") { promise: Promise ->
+            Permissions.getPermissionsWithPermissionsManager(
+                appContext.permissions,
+                promise,
+                android.Manifest.permission.RECORD_AUDIO,
+            )
+        }
 
-         AsyncFunction("requestMicrophonePermissionsAsync") { promise: Promise ->
-             Permissions.askForPermissionsWithPermissionsManager(
-                 appContext.permissions,
-                 promise,
-                 android.Manifest.permission.RECORD_AUDIO
-             )
-         }
+        AsyncFunction("requestMicrophonePermissionsAsync") { promise: Promise ->
+            Permissions.askForPermissionsWithPermissionsManager(
+                appContext.permissions,
+                promise,
+                android.Manifest.permission.RECORD_AUDIO,
+            )
+        }
 
-        // Register events
         Events(
             ON_MIC_DATA_EVENT,
             ON_INPUT_VOLUME_LEVEL_EVENT,
             ON_OUTPUT_VOLUME_LEVEL_EVENT,
             ON_RECORDING_CHANGE_EVENT,
-            ON_AUDIO_INTERRUPTION_EVENT
+            ON_AUDIO_INTERRUPTION_EVENT,
         )
     }
 
@@ -117,9 +134,10 @@ class ExpoTwoWayAudioModule : Module() {
             }
             onAudioInterruptionCallback = { data ->
                 sendEvent(ON_AUDIO_INTERRUPTION_EVENT, bundleOf("data" to data))
-                sendEvent(ON_RECORDING_CHANGE_EVENT, bundleOf(
-                    "data" to (audioEngine?.isRecording ?: false)
-                ))
+                sendEvent(
+                    ON_RECORDING_CHANGE_EVENT,
+                    bundleOf("data" to (audioEngine?.isRecording ?: false)),
+                )
             }
         }
     }

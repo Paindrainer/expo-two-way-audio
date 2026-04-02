@@ -1,5 +1,6 @@
 import { Buffer } from "buffer";
 import {
+  DEFAULT_PLAYBACK_SAMPLE_RATE,
   MicrophoneDataCallback,
   VolumeLevelCallback,
   getMicrophoneModeIOS,
@@ -76,7 +77,7 @@ export function Testbed() {
   );
 
   useEffect(() => {
-    initialize().then(() => setAudioInitialized(true));
+    initialize(DEFAULT_PLAYBACK_SAMPLE_RATE).then(() => setAudioInitialized(true));
   }, []);
 
   const handleToggleMute = useCallback(() => {

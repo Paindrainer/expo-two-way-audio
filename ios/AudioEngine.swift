@@ -8,7 +8,11 @@ class AudioEngine {
     private var sessionInterruptionObserver: Any?
     private var mediaServicesResetObserver: Any?
     
-    public private(set) var voiceIOFormat: AVAudioFormat
+    private let microphoneSampleRate: Double = 16000
+
+    public private(set) var microphoneFormat: AVAudioFormat
+    public private(set) var playbackFormat: AVAudioFormat
+    public private(set) var playbackSampleRate: Double
     public private(set) var isRecording = false
     
     public var onMicDataCallback: ((Data) -> Void)?
@@ -32,14 +36,19 @@ class AudioEngine {
         case audioFormatError
     }
     
-    init() throws {
+    init(playbackSampleRate: Double = 24000) throws {
+        self.playbackSampleRate = playbackSampleRate
+
         avAudioEngine.attach(speechPlayer)
         
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1) else {
+        guard let microphoneFormat = AVAudioFormat(standardFormatWithSampleRate: microphoneSampleRate, channels: 1),
+              let playbackFormat = AVAudioFormat(standardFormatWithSampleRate: playbackSampleRate, channels: 1) else {
             throw AudioEngineError.audioFormatError
         }
-        voiceIOFormat = format
-        print("Voice IO format: \(String(describing: voiceIOFormat))")
+        self.microphoneFormat = microphoneFormat
+        self.playbackFormat = playbackFormat
+        print("Microphone format: \(String(describing: microphoneFormat))")
+        print("Playback format: \(String(describing: playbackFormat))")
         
         engineConfigChangeObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
@@ -87,7 +96,7 @@ class AudioEngine {
         }
         
         do {
-            try session.setPreferredSampleRate(voiceIOFormat.sampleRate)
+            try session.setPreferredSampleRate(playbackFormat.sampleRate)
         } catch {
             print("Could not set the preferred sample rate: \(error.localizedDescription)")
         }
@@ -113,10 +122,10 @@ class AudioEngine {
         let output = avAudioEngine.outputNode
         let mainMixer = avAudioEngine.mainMixerNode
         
-        avAudioEngine.connect(speechPlayer, to: mainMixer, format: voiceIOFormat)
-        avAudioEngine.connect(mainMixer, to: output, format: voiceIOFormat)
+        avAudioEngine.connect(speechPlayer, to: mainMixer, format: playbackFormat)
+        avAudioEngine.connect(mainMixer, to: output, format: playbackFormat)
         
-        input.installTap(onBus: 0, bufferSize: 2048, format: voiceIOFormat) { [weak self] buffer, when in
+        input.installTap(onBus: 0, bufferSize: 2048, format: microphoneFormat) { [weak self] buffer, when in
             // We don't do any input processing (no volume calculation or passing mic data to the callback) if discardRecording == true
             // See comment in the playPCMData function
             if self?.isRecording == true && self?.discardRecording == false {
@@ -125,7 +134,7 @@ class AudioEngine {
             }
         }
         
-        mainMixer.installTap(onBus: 0, bufferSize: 2048, format: voiceIOFormat) { [weak self] buffer, when in
+        mainMixer.installTap(onBus: 0, bufferSize: 2048, format: playbackFormat) { [weak self] buffer, when in
             self?.processOutputBuffer(buffer)
             self?.updateOutputVolume()
         }
@@ -212,7 +221,7 @@ class AudioEngine {
         let frameCount = UInt32(data.count) / 2 // 16-bit input = 2 bytes per frame
         
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                   sampleRate: 16000,
+                                   sampleRate: playbackFormat.sampleRate,
                                    channels: 1,
                                    interleaved: false)!
         

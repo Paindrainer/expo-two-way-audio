@@ -1,8 +1,18 @@
-import { type PermissionResponse, createPermissionHook } from "expo-modules-core";
+import { type PermissionResponse } from "expo-modules-core";
+
 import ExpoTwoWayAudioModule from "./ExpoTwoWayAudioModule";
 
-export async function initialize() {
-  return await ExpoTwoWayAudioModule.initialize();
+export const DEFAULT_PLAYBACK_SAMPLE_RATE = 24000;
+
+export async function initialize(
+  playbackSampleRate: number = DEFAULT_PLAYBACK_SAMPLE_RATE,
+) {
+  const resolvedPlaybackSampleRate =
+    Number.isFinite(playbackSampleRate) && playbackSampleRate > 0
+      ? Math.round(playbackSampleRate)
+      : DEFAULT_PLAYBACK_SAMPLE_RATE;
+
+  return await ExpoTwoWayAudioModule.initialize(resolvedPlaybackSampleRate);
 }
 
 export function playPCMData(audioData: Uint8Array) {
