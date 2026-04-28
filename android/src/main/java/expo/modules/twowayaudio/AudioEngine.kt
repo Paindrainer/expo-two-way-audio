@@ -59,6 +59,10 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     @SuppressLint("NewApi")
     private fun initializeAudio(context:Context) {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        // MODE_IN_COMMUNICATION + setCommunicationDevice is required so the
+        // mic capture (VOICE_COMMUNICATION source) routes through the
+        // headset mic when one is connected. Output is still pinned to the
+        // media stream via USAGE_MEDIA on the AudioTrack below.
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
         requestAudioFocus()
 
@@ -87,8 +91,8 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
 
         audioTrack = AudioTrack(
             AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build(),
             AudioFormat.Builder()
                 .setEncoding(AUDIO_FORMAT)
@@ -150,8 +154,8 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
             AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
                 .setAcceptsDelayedFocusGain(true)
