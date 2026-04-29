@@ -30,7 +30,7 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
 
     private lateinit var audioRecord: AudioRecord
     private lateinit var audioManager: AudioManager
-    private lateinit var audioTrack: AudioTrack
+    private var audioTrack: AudioTrack? = null
     private var audioFocusRequest: AudioFocusRequest? = null
     private val audioSampleQueue: Queue<ByteArray> = LinkedList()
     private var echoCanceler: AcousticEchoCanceler? = null
@@ -38,6 +38,10 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     private val executorServiceMicrophone = Executors.newFixedThreadPool(1)
     private val executorServicePlayback = Executors.newFixedThreadPool(1)
     private var speakerDevice: AudioDeviceInfo? = null
+    private val audioTrackLock = Any()
+    // Profile currently in use by audioTrack: true => voice/call, false => media.
+    // null means no track yet built.
+    private var currentTrackUsesVoiceProfile: Boolean? = null
 
     var isRecording = false
     private var isRecordingBeforePause = false
@@ -46,11 +50,18 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     val currentPlaybackSampleRate: Int
         get() = playbackSampleRate
 
+    val currentTrackUsesVoiceProfilePublic: Boolean?
+        get() = currentTrackUsesVoiceProfile
+
     // Callbacks
     var onMicDataCallback: ((ByteArray) -> Unit)? = null
     var onInputVolumeCallback: ((Float) -> Unit)? = null
     var onOutputVolumeCallback: ((Float) -> Unit)? = null
     var onAudioInterruptionCallback: ((String) -> Unit)? = null
+    // Fires whenever the active route changes profile so callers can wire
+    // up Activity.setVolumeControlStream() — hardware volume keys are
+    // governed by that, not by AudioAttributes.
+    var onAudioProfileChanged: ((useVoiceProfile: Boolean) -> Unit)? = null
 
     init {
         initializeAudio(context)
@@ -60,13 +71,13 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     private fun initializeAudio(context:Context) {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         // MODE_IN_COMMUNICATION + setCommunicationDevice is required so the
-        // mic capture (VOICE_COMMUNICATION source) routes through the
-        // headset mic when one is connected. Output is still pinned to the
-        // media stream via USAGE_MEDIA on the AudioTrack below.
+        // mic capture (VOICE_COMMUNICATION source) and the AudioTrack output
+        // both honor the chosen route. The AudioTrack is rebuilt with
+        // device-appropriate AudioAttributes whenever the route changes.
         audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-        requestAudioFocus()
 
-        // Route audio to external device if connected, otherwise route to speaker
+        // Pick the route first so the focus request and AudioTrack get the
+        // right AudioAttributes profile.
         updateAudioRouting()
 
         // Listen for changes in audio routing
@@ -82,82 +93,165 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
                 updateAudioRouting()
             }
         }, null)
+    }
 
-        val bufferSize = AudioTrack.getMinBufferSize(
-            playbackSampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AUDIO_FORMAT
-        )
-
-        audioTrack = AudioTrack(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
-                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                .build(),
-            AudioFormat.Builder()
-                .setEncoding(AUDIO_FORMAT)
-                .setSampleRate(playbackSampleRate)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .build(),
-            bufferSize,
-            AudioTrack.MODE_STREAM,
-            audioManager.generateAudioSessionId()
-        ).apply {
-            play()
+    /**
+     * Voice profile (USAGE_VOICE_COMMUNICATION + CONTENT_TYPE_SPEECH) routes
+     * playback to STREAM_VOICE_CALL — used when the active output is the
+     * built-in earpiece/speaker so hardware volume keys map to call volume
+     * and the speaker drives at its loud "in-call" level.
+     *
+     * Media profile (USAGE_MEDIA + CONTENT_TYPE_MUSIC) routes playback to
+     * STREAM_MUSIC — used for wired or BT headsets so A2DP/BLE works
+     * naturally and hardware volume keys map to media volume on the device.
+     * BT mic capture still works because mic source uses VOICE_COMMUNICATION
+     * which follows setCommunicationDevice() (typically the SCO/BLE device).
+     */
+    private fun shouldUseVoiceProfile(deviceType: Int?): Boolean {
+        return when (deviceType) {
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> true
+            else -> false
         }
     }
 
-    private fun updateAudioRouting() {
-        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-        var isExternalDeviceConnected = false
-        var selectedDevice: AudioDeviceInfo? = null
-
-        for (device in devices) {
-            if (device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                speakerDevice = device
-            }
-            if (device.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-                device.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                device.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-                device.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
-                isExternalDeviceConnected = true
-                selectedDevice = device
-                break
-            } else if (device.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                selectedDevice = device
-            }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Use the modern API for Android S and above
-            try {
-                selectedDevice?.let {
-                    audioManager.setCommunicationDevice(it)
-                }
-            }catch (e:Exception){
-                Log.e("AudioEngine", "Error setting communication device. Using speaker")
-                speakerDevice?.let {
-                    audioManager.setCommunicationDevice(it)
-                }
-            }
-
+    private fun buildAudioAttributes(useVoiceProfile: Boolean): AudioAttributes {
+        return if (useVoiceProfile) {
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
         } else {
-            // Fall back to deprecated method for older Android versions
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = !isExternalDeviceConnected
+            AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
         }
     }
 
     @SuppressLint("NewApi")
-    private fun requestAudioFocus() {
+    private fun ensureAudioTrackForProfile(useVoiceProfile: Boolean) {
+        var profileChanged = false
+        synchronized(audioTrackLock) {
+            if (currentTrackUsesVoiceProfile == useVoiceProfile && audioTrack != null) {
+                return
+            }
+            profileChanged = true
+
+            // Tear down the existing track so we can rebuild with attributes
+            // that match the active route.
+            audioTrack?.let { track ->
+                try {
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        track.pause()
+                    }
+                    track.flush()
+                    track.release()
+                } catch (e: Exception) {
+                    Log.e("AudioEngine", "Error releasing previous AudioTrack", e)
+                }
+            }
+            audioTrack = null
+
+            // Refresh focus with attributes matching the new profile so the
+            // OS treats us as the correct kind of audio source.
+            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+            audioFocusRequest = null
+            requestAudioFocus(useVoiceProfile)
+
+            val bufferSize = AudioTrack.getMinBufferSize(
+                playbackSampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AUDIO_FORMAT
+            )
+
+            val newTrack = AudioTrack(
+                buildAudioAttributes(useVoiceProfile),
+                AudioFormat.Builder()
+                    .setEncoding(AUDIO_FORMAT)
+                    .setSampleRate(playbackSampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                    .build(),
+                bufferSize,
+                AudioTrack.MODE_STREAM,
+                audioManager.generateAudioSessionId()
+            )
+            newTrack.play()
+            audioTrack = newTrack
+            currentTrackUsesVoiceProfile = useVoiceProfile
+            Log.d(
+                "AudioEngine",
+                "AudioTrack built with " + if (useVoiceProfile) "voice profile" else "media profile"
+            )
+        }
+        if (profileChanged) {
+            try {
+                onAudioProfileChanged?.invoke(useVoiceProfile)
+            } catch (e: Exception) {
+                Log.e("AudioEngine", "onAudioProfileChanged threw", e)
+            }
+        }
+    }
+
+    @SuppressLint("NewApi")
+    private fun updateAudioRouting() {
+        // Prefer SCO / BLE headset over A2DP for BT, because A2DP has no mic
+        // path. Wired headsets next, then fall back to the built-in speaker.
+        val priority = intArrayOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        )
+
+        val candidates: List<AudioDeviceInfo> =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                audioManager.availableCommunicationDevices
+            } else {
+                audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
+            }
+
+        speakerDevice = candidates.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        } ?: speakerDevice
+
+        var selectedDevice: AudioDeviceInfo? = null
+        for (type in priority) {
+            selectedDevice = candidates.firstOrNull { it.type == type }
+            if (selectedDevice != null) break
+        }
+        if (selectedDevice == null) selectedDevice = speakerDevice
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                selectedDevice?.let { audioManager.setCommunicationDevice(it) }
+            } catch (e: Exception) {
+                Log.e("AudioEngine", "Error setting communication device. Using speaker", e)
+                speakerDevice?.let { audioManager.setCommunicationDevice(it) }
+                selectedDevice = speakerDevice
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.isSpeakerphoneOn =
+                selectedDevice?.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        }
+
+        val useVoiceProfile = shouldUseVoiceProfile(selectedDevice?.type)
+        ensureAudioTrackForProfile(useVoiceProfile)
+        Log.d(
+            "AudioEngine",
+            "Routing => device=${selectedDevice?.type}, voiceProfile=$useVoiceProfile"
+        )
+    }
+
+    @SuppressLint("NewApi")
+    private fun requestAudioFocus(useVoiceProfile: Boolean = currentTrackUsesVoiceProfile ?: true) {
         val focusRequest =
             AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                        .build()
-                )
+                .setAudioAttributes(buildAudioAttributes(useVoiceProfile))
                 .setAcceptsDelayedFocusGain(true)
                 .setOnAudioFocusChangeListener { focusChange ->
                     when (focusChange) {
@@ -293,7 +387,11 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     }
 
     private fun playSample(data: ByteArray) {
-        audioTrack.write(data, 0, data.size)
+        // Hold the lock so a route-change rebuild can't release the track
+        // out from under a write in progress.
+        synchronized(audioTrackLock) {
+            audioTrack?.write(data, 0, data.size)
+        }
     }
 
     fun bypassVoiceProcessing(bypass: Boolean) {
@@ -310,14 +408,18 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     fun pauseRecordingAndPlayer() {
         isRecordingBeforePause = isRecording
         isRecording = toggleRecording(false)
-        audioTrack.pause()
+        synchronized(audioTrackLock) {
+            audioTrack?.pause()
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun resumeRecordingAndPlayer() {
         requestAudioFocus()
         isRecording = toggleRecording(isRecordingBeforePause)
-        audioTrack.play()
+        synchronized(audioTrackLock) {
+            audioTrack?.play()
+        }
     }
 
     @SuppressLint("NewApi")
@@ -325,12 +427,16 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
         stopRecording()
         executorServicePlayback.shutdownNow()
         audioSampleQueue.clear()
-        if (::audioTrack.isInitialized) {
-            if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                audioTrack.pause()
+        synchronized(audioTrackLock) {
+            audioTrack?.let { track ->
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.pause()
+                }
+                track.flush()
+                track.release()
             }
-            audioTrack.flush()
-            audioTrack.release()
+            audioTrack = null
+            currentTrackUsesVoiceProfile = null
         }
         audioManager.mode = AudioManager.MODE_NORMAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
