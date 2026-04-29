@@ -1,6 +1,9 @@
 package expo.modules.twowayaudio
 
 import AudioEngine
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.os.bundleOf
 import expo.modules.interfaces.permissions.Permissions
@@ -138,6 +141,31 @@ class ExpoTwoWayAudioModule : Module() {
                     ON_RECORDING_CHANGE_EVENT,
                     bundleOf("data" to (audioEngine?.isRecording ?: false)),
                 )
+            }
+            onAudioProfileChanged = { useVoiceProfile ->
+                // setVolumeControlStream is what binds the hardware volume
+                // keys to a stream; AudioAttributes alone do not. Must be
+                // called on the activity on the UI thread.
+                val stream = if (useVoiceProfile) {
+                    AudioManager.STREAM_VOICE_CALL
+                } else {
+                    AudioManager.USE_DEFAULT_STREAM_TYPE
+                }
+                Handler(Looper.getMainLooper()).post {
+                    appContext.currentActivity?.volumeControlStream = stream
+                }
+            }
+        }
+        // Apply the current profile right away in case the route was already
+        // resolved before this callback was attached.
+        audioEngine?.let { engine ->
+            val stream = if (engine.currentTrackUsesVoiceProfilePublic == true) {
+                AudioManager.STREAM_VOICE_CALL
+            } else {
+                AudioManager.USE_DEFAULT_STREAM_TYPE
+            }
+            Handler(Looper.getMainLooper()).post {
+                appContext.currentActivity?.volumeControlStream = stream
             }
         }
     }
