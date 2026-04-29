@@ -110,7 +110,9 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     private fun shouldUseVoiceProfile(deviceType: Int?): Boolean {
         return when (deviceType) {
             AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
-            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> true
+            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET -> true
             else -> false
         }
     }
