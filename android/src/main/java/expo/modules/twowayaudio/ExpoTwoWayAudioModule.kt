@@ -142,30 +142,27 @@ class ExpoTwoWayAudioModule : Module() {
                     bundleOf("data" to (audioEngine?.isRecording ?: false)),
                 )
             }
-            onAudioProfileChanged = { _, useCallVolumeStream ->
+            onAudioProfileChanged = { useVoiceProfile ->
                 // setVolumeControlStream is what binds the hardware volume
                 // keys to a stream; AudioAttributes alone do not. Must be
                 // called on the activity on the UI thread.
-                // STREAM_MUSIC for headsets so the on-device volume slider
-                // shows "Bluetooth"/media even when AudioTrack uses voice
-                // attributes for SCO/BLE routing.
-                val stream = if (useCallVolumeStream) {
+                val stream = if (useVoiceProfile) {
                     AudioManager.STREAM_VOICE_CALL
                 } else {
-                    AudioManager.STREAM_MUSIC
+                    AudioManager.USE_DEFAULT_STREAM_TYPE
                 }
                 Handler(Looper.getMainLooper()).post {
                     appContext.currentActivity?.volumeControlStream = stream
                 }
             }
         }
-        // Apply the current preference right away in case the route was
-        // already resolved before this callback was attached.
+        // Apply the current profile right away in case the route was already
+        // resolved before this callback was attached.
         audioEngine?.let { engine ->
-            val stream = if (engine.currentUsesCallVolumeStreamPublic == true) {
+            val stream = if (engine.currentTrackUsesVoiceProfilePublic == true) {
                 AudioManager.STREAM_VOICE_CALL
             } else {
-                AudioManager.STREAM_MUSIC
+                AudioManager.USE_DEFAULT_STREAM_TYPE
             }
             Handler(Looper.getMainLooper()).post {
                 appContext.currentActivity?.volumeControlStream = stream

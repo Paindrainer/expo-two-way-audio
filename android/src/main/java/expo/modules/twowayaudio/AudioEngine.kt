@@ -42,11 +42,6 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     // Profile currently in use by audioTrack: true => voice/call, false => media.
     // null means no track yet built.
     private var currentTrackUsesVoiceProfile: Boolean? = null
-    // Whether hardware volume keys should map to STREAM_VOICE_CALL.
-    // Only true on the built-in earpiece/speaker — on BT/wired headsets we
-    // want keys to control media volume even when the AudioTrack is using
-    // voice attributes for routing.
-    private var currentUsesCallVolumeStream: Boolean? = null
 
     var isRecording = false
     private var isRecordingBeforePause = false
@@ -58,19 +53,15 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     val currentTrackUsesVoiceProfilePublic: Boolean?
         get() = currentTrackUsesVoiceProfile
 
-    val currentUsesCallVolumeStreamPublic: Boolean?
-        get() = currentUsesCallVolumeStream
-
     // Callbacks
     var onMicDataCallback: ((ByteArray) -> Unit)? = null
     var onInputVolumeCallback: ((Float) -> Unit)? = null
     var onOutputVolumeCallback: ((Float) -> Unit)? = null
     var onAudioInterruptionCallback: ((String) -> Unit)? = null
-    // Fires whenever the active route changes the AudioTrack profile or the
-    // preferred volume-key stream. Callers wire this to
-    // Activity.setVolumeControlStream() — hardware volume keys are governed
-    // by that, not by AudioAttributes.
-    var onAudioProfileChanged: ((useVoiceProfile: Boolean, useCallVolumeStream: Boolean) -> Unit)? = null
+    // Fires whenever the active route changes profile so callers can wire
+    // up Activity.setVolumeControlStream() — hardware volume keys are
+    // governed by that, not by AudioAttributes.
+    var onAudioProfileChanged: ((useVoiceProfile: Boolean) -> Unit)? = null
 
     init {
         initializeAudio(context)
@@ -126,20 +117,6 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
         }
     }
 
-    // Hardware volume keys should map to STREAM_VOICE_CALL only on the
-    // built-in earpiece/speaker. On any kind of headset (BT SCO/BLE, wired,
-    // USB, A2DP) we want keys to control media volume so the on-device UI
-    // shows the route's familiar volume slider (e.g. "Bluetooth") rather
-    // than the in-call slider — even when the AudioTrack itself uses voice
-    // attributes for routing through the SCO/BLE link.
-    private fun shouldUseCallVolumeStream(deviceType: Int?): Boolean {
-        return when (deviceType) {
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
-            AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> true
-            else -> false
-        }
-    }
-
     private fun buildAudioAttributes(useVoiceProfile: Boolean): AudioAttributes {
         return if (useVoiceProfile) {
             AudioAttributes.Builder()
@@ -155,11 +132,13 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     }
 
     @SuppressLint("NewApi")
-    private fun ensureAudioTrackForProfile(useVoiceProfile: Boolean): Boolean {
+    private fun ensureAudioTrackForProfile(useVoiceProfile: Boolean) {
+        var profileChanged = false
         synchronized(audioTrackLock) {
             if (currentTrackUsesVoiceProfile == useVoiceProfile && audioTrack != null) {
-                return false
+                return
             }
+            profileChanged = true
 
             // Tear down the existing track so we can rebuild with attributes
             // that match the active route.
@@ -206,7 +185,13 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
                 "AudioEngine",
                 "AudioTrack built with " + if (useVoiceProfile) "voice profile" else "media profile"
             )
-            return true
+        }
+        if (profileChanged) {
+            try {
+                onAudioProfileChanged?.invoke(useVoiceProfile)
+            } catch (e: Exception) {
+                Log.e("AudioEngine", "onAudioProfileChanged threw", e)
+            }
         }
     }
 
@@ -257,20 +242,10 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
         }
 
         val useVoiceProfile = shouldUseVoiceProfile(selectedDevice?.type)
-        val useCallVolumeStream = shouldUseCallVolumeStream(selectedDevice?.type)
-        val profileChanged = ensureAudioTrackForProfile(useVoiceProfile)
-        val volumeStreamChanged = currentUsesCallVolumeStream != useCallVolumeStream
-        currentUsesCallVolumeStream = useCallVolumeStream
-        if (profileChanged || volumeStreamChanged) {
-            try {
-                onAudioProfileChanged?.invoke(useVoiceProfile, useCallVolumeStream)
-            } catch (e: Exception) {
-                Log.e("AudioEngine", "onAudioProfileChanged threw", e)
-            }
-        }
+        ensureAudioTrackForProfile(useVoiceProfile)
         Log.d(
             "AudioEngine",
-            "Routing => device=${selectedDevice?.type}, voiceProfile=$useVoiceProfile, callVolumeStream=$useCallVolumeStream"
+            "Routing => device=${selectedDevice?.type}, voiceProfile=$useVoiceProfile"
         )
     }
 
@@ -465,7 +440,6 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
             audioTrack = null
             currentTrackUsesVoiceProfile = null
         }
-        currentUsesCallVolumeStream = null
         audioManager.mode = AudioManager.MODE_NORMAL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             audioManager.clearCommunicationDevice()
