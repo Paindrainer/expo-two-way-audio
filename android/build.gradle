@@ -1,13 +1,18 @@
-apply plugin: 'com.android.library'
+// expo-module-gradle-plugin replaces the older ExpoModulesCorePlugin.gradle helper
+// and supplies the core dependencies and publishing config this file used to request
+// by hand. It is also the only thing that applies the `io.github.lukmccall.pika`
+// Kotlin compiler plugin, which SDK 57's expo-modules-core needs: it rewrites the
+// type-descriptor intrinsics behind the Function/AsyncFunction DSL. Without it every
+// call in definition() keeps an unprocessed placeholder whose fallback body throws
+// "This function has a reified type parameter and thus can only be inlined at
+// compilation time", killing the host the moment this module registers.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
 
 group = 'expo.modules.twowayaudio'
 version = '0.1.0'
-
-def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
-apply from: expoModulesCorePlugin
-applyKotlinExpoModulesCorePlugin()
-useCoreDependencies()
-useExpoPublishing()
 
 // If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
 // The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
