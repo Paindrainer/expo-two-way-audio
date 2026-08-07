@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import AVFoundation
+internal import React
 
 let microphoneKey = "NSMicrophoneUsageDescription"
 
@@ -15,7 +16,7 @@ class MicrophonePermissionRequester: NSObject, EXPermissionsRequester {
     var status: EXPermissionStatus
 
     guard (Bundle.main.infoDictionary?["NSMicrophoneUsageDescription"]) != nil else {
-      EXFatal(EXErrorWithMessage("""
+      RCTFatal(RCTErrorWithMessage("""
         This app is missing NSMicrophoneUsageDescription, so audio services will fail.
         Add one of these keys to your bundle's Info.plist.
       """))
