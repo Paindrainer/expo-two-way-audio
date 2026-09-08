@@ -14,9 +14,13 @@ Check out our [examples/](./examples) to see the module in action.
 
 ## Installation
 
+This fork is not on npm. Install a tagged release from GitHub:
+
 ```
-npm i @speechmatics/expo-two-way-audio
+npm i github:Paindrainer/expo-two-way-audio#v0.1.3-pd.2
 ```
+
+See [Paindrainer fork](#paindrainer-fork) for what differs from upstream.
 
 ## Usage
 
@@ -25,7 +29,7 @@ Please check out our [examples/](./examples) to get full sample code.
 1. Request permissions for recording audio
 
    ```JSX
-   import {useMicrophonePermissions} from "@speechmatics/expo-two-way-audio";
+   import {useMicrophonePermissions} from "@paindrainer/expo-two-way-audio";
 
    const [micPermission, requestMicPermission] = useMicrophonePermissions();
    console.log(micPermission);
@@ -85,13 +89,19 @@ It is not published to npm — consumers install a tagged release straight from
 this repository:
 
 ```
-npm i github:Paindrainer/expo-two-way-audio#v0.1.3-pd.1
+npm i github:Paindrainer/expo-two-way-audio#v0.1.3-pd.2
 ```
 
 Fork versions carry a `-pd.N` suffix on top of the upstream version they are
 based on, and every release gets a matching `vX.Y.Z-pd.N` tag. Pin the tag, not
 a commit SHA, and do not patch this package with `patch-package` in a consuming
 app — fix it here and cut a new tag instead, so every app gets the same code.
+
+The package is named `@paindrainer/...` rather than keeping upstream's
+`@speechmatics/...`. Under the old name, an `npm i @speechmatics/expo-two-way-audio`
+that lost the `github:` prefix would silently install upstream 0.1.2 from the real
+npm scope and drop the Android fixes below with no error. No `@paindrainer` package
+exists on npm, so the same mistake now fails loudly.
 
 ### Changes on top of upstream 0.1.2
 

@@ -4,8 +4,8 @@
     "strict": true,
     "module": "ESNext",
     "paths": {
-      "@speechmatics/expo-two-way-audio": ["../../src/index"],
-      "@speechmatics/expo-two-way-audio/*": ["../../src/*"]
+      "@paindrainer/expo-two-way-audio": ["../../src/index"],
+      "@paindrainer/expo-two-way-audio/*": ["../../src/*"]
     }
   }
 }

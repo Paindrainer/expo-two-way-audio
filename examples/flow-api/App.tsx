@@ -15,7 +15,7 @@ import {
   useExpoTwoWayAudioEventListener,
   useIsRecording,
   useMicrophonePermissions,
-} from "@speechmatics/expo-two-way-audio";
+} from "@paindrainer/expo-two-way-audio";
 
 import {
   FlowProvider,
