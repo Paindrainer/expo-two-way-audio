@@ -36,7 +36,10 @@ class ExpoTwoWayAudioModule : Module() {
             try {
                 val existingEngine = audioEngine
                 if (existingEngine != null) {
-                    if (existingEngine.currentPlaybackSampleRate == resolvedPlaybackSampleRate) {
+                    // A torn-down engine can still be referenced here (the mic
+                    // tap can lose the microphone in the background), and reusing
+                    // it would hand back a dead engine. Rebuild in that case.
+                    if (!existingEngine.isTornDown && existingEngine.currentPlaybackSampleRate == resolvedPlaybackSampleRate) {
                         promise.resolve(true)
                         return@AsyncFunction
                     }

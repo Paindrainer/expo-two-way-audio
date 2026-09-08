@@ -44,6 +44,12 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     private var currentTrackUsesVoiceProfile: Boolean? = null
 
     var isRecording = false
+    // Once tearDown() has run the executors are shut down for good, so every
+    // entry point below has to become a no-op instead of throwing
+    // RejectedExecutionException from whatever thread happens to call it.
+    @Volatile
+    var isTornDown = false
+        private set
     private var isRecordingBeforePause = false
     var isPlaying = false
 
@@ -274,6 +280,10 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     @RequiresApi(Build.VERSION_CODES.Q)
     @SuppressLint("MissingPermission")
     private fun startRecording(){
+        if (isTornDown) {
+            Log.w("AudioEngine", "startRecording ignored: engine has been torn down")
+            return
+        }
         val bufferSize = AudioRecord.getMinBufferSize(MICROPHONE_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_COMMUNICATION,
@@ -309,6 +319,10 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     }
 
     private fun startMicSampleTap(){
+        if (isTornDown || executorServiceMicrophone.isShutdown) {
+            Log.w("AudioEngine", "startMicSampleTap ignored: engine has been torn down")
+            return
+        }
         executorServiceMicrophone.execute {
             val buffer = ByteArray(1024)
             try {
@@ -323,10 +337,15 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
                 }
                 Log.d("AudioEngine", "Mic sample tap stopped.")
             }catch (e: Exception){
+                // Losing the mic (backgrounding, another app taking it, the
+                // AudioRecord being released under a blocking read) used to tear
+                // the whole engine down from this worker thread. The module kept
+                // its reference, so the next startRecording() hit shut-down
+                // executors and crashed the app. Just stop the tap; the engine
+                // stays usable and startRecording() builds a fresh AudioRecord.
                 Log.e("AudioEngine", "Error reading mic sample data", e)
                 isRecording = false
-                tearDown()
-                throw e
+                onInputVolumeCallback?.invoke(0.0F)
             }
         }
     }
@@ -335,14 +354,21 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
         if (!isRecording) return
         isRecording = false
         if (audioRecord.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-            audioRecord.stop()
-            audioRecord.release()
+            // The sample tap can still be inside a blocking read here, which
+            // makes stop()/release() throw on some devices.
+            try {
+                audioRecord.stop()
+                audioRecord.release()
+            } catch (e: Exception) {
+                Log.w("AudioEngine", "Ignoring error while stopping AudioRecord", e)
+            }
         }
         onInputVolumeCallback?.invoke(0.0F)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun toggleRecording(value: Boolean): Boolean {
+        if (isTornDown) return false
         if (value == isRecording) return isRecording
 
         if (value) {
@@ -356,6 +382,7 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
     }
 
     fun playPCMData(data: ByteArray) {
+        if (isTornDown) return
         audioSampleQueue.add(data)
         if (!isPlaying) {
             playAudioFromSampleQueue()
@@ -406,6 +433,7 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun pauseRecordingAndPlayer() {
+        if (isTornDown) return
         isRecordingBeforePause = isRecording
         isRecording = toggleRecording(false)
         synchronized(audioTrackLock) {
@@ -415,6 +443,7 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
 
     @RequiresApi(Build.VERSION_CODES.Q)
     fun resumeRecordingAndPlayer() {
+        if (isTornDown) return
         requestAudioFocus()
         isRecording = toggleRecording(isRecordingBeforePause)
         synchronized(audioTrackLock) {
@@ -424,6 +453,8 @@ class AudioEngine (context: Context, initialPlaybackSampleRate: Int = DEFAULT_PL
 
     @SuppressLint("NewApi")
     fun tearDown() {
+        if (isTornDown) return
+        isTornDown = true
         stopRecording()
         executorServicePlayback.shutdownNow()
         audioSampleQueue.clear()

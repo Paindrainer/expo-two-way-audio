@@ -78,6 +78,45 @@ Please check out our [examples/](./examples) to get full sample code.
    toggleRecording(true);
    ```
 
+## Paindrainer fork
+
+This is Paindrainer's fork of [speechmatics/expo-two-way-audio](https://github.com/speechmatics/expo-two-way-audio).
+It is not published to npm — consumers install a tagged release straight from
+this repository:
+
+```
+npm i github:Paindrainer/expo-two-way-audio#v0.1.3-pd.1
+```
+
+Fork versions carry a `-pd.N` suffix on top of the upstream version they are
+based on, and every release gets a matching `vX.Y.Z-pd.N` tag. Pin the tag, not
+a commit SHA, and do not patch this package with `patch-package` in a consuming
+app — fix it here and cut a new tag instead, so every app gets the same code.
+
+### Changes on top of upstream 0.1.2
+
+- Android: the mic sample tap no longer tears the whole engine down when it
+  loses the microphone (backgrounding, another app taking it, `AudioRecord`
+  released under a blocking read). It used to throw from a worker thread and the
+  next `startRecording()` hit shut-down executors, crashing the app with
+  `RejectedExecutionException`.
+- Android: `AudioEngine` tracks `isTornDown`, so calls arriving after teardown
+  are no-ops rather than crashes, and `stopRecording()` tolerates `stop()` /
+  `release()` throwing.
+- Android: `initialize()` rebuilds a torn-down engine instead of handing back a
+  dead one.
+- Android: build with `expo-module-gradle-plugin` for Expo SDK 57.
+- Android: route-specific audio profiles, configurable playback sample rate
+  (24 kHz default).
+- iOS: Expo SDK 57 permission API compatibility.
+
+### Cutting a release
+
+1. Commit the change on `main`.
+2. Bump `version` in `package.json` to the next `-pd.N`.
+3. Tag it `vX.Y.Z-pd.N` and push the tag.
+4. Point the consuming app's `package.json` at the new tag and reinstall.
+
 ## Notes
 
 Some audio features of expo-two-way-audio like Acoustic Echo Cancelling, noise reduction or microphone modes (iOS) don't work on simulator. Run the example on a real device to test these features.
